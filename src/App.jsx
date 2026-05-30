@@ -501,9 +501,16 @@ async function fetchShortInterest(ticker) {
 /* ═══════════════════════════════════════════════════════════════════════════
    fetchMacroContext — FED liquidity, yield curve, VIX proxy via FRED
 ═══════════════════════════════════════════════════════════════════════════ */
+function fetchWithTimeout(url, ms = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
 async function fetchMacroContext() {
   const seriesIds = {
-    fed:      "WALCL",
+    fed:     "WALCL",
     t10y2y:  "T10Y2Y",
     dff:     "DFF",
     m2:      "M2SL",
@@ -512,16 +519,18 @@ async function fetchMacroContext() {
   };
 
   const results = {};
-  await Promise.all(
+
+  // Promise.allSettled: muestra los datos que lleguen aunque algunos fallen o agoten timeout
+  await Promise.allSettled(
     Object.entries(seriesIds).map(async ([key, sid]) => {
       try {
         const url = new URL(FRED_BASE);
-        url.searchParams.set("series_id",     sid);
-        url.searchParams.set("api_key",       FRED_KEY);
-        url.searchParams.set("file_type",     "json");
-        url.searchParams.set("sort_order",    "desc");
-        url.searchParams.set("limit",         "2");
-        const res  = await fetch(url.toString());
+        url.searchParams.set("series_id",  sid);
+        url.searchParams.set("api_key",    FRED_KEY);
+        url.searchParams.set("file_type",  "json");
+        url.searchParams.set("sort_order", "desc");
+        url.searchParams.set("limit",      "2");
+        const res  = await fetchWithTimeout(url.toString(), 10000);
         const data = await res.json();
         if (data.observations && data.observations.length) {
           results[key] = {
@@ -529,8 +538,11 @@ async function fetchMacroContext() {
             previous: parseFloat(data.observations[1]?.value),
             date:     data.observations[0].date,
           };
+        } else {
+          results[key] = null;
         }
-      } catch {
+      } catch (err) {
+        console.warn(`[QuantScan] FRED ${sid} falló:`, err?.name === "AbortError" ? "timeout 10s" : err?.message);
         results[key] = null;
       }
     })
@@ -667,26 +679,42 @@ function scoreComposite(ind, fundamentals, macro, options, insider, shortInt) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   NOTIFICATIONS — Telegram + Make.com webhook
+   NOTIFICATIONS — Make.com webhook (incluye Telegram via Make)
 ═══════════════════════════════════════════════════════════════════════════ */
 async function sendTelegram(text) {
+  // Envía via Make.com webhook con los campos que necesita el escenario
+  const payload = {
+    chat_id: TG_CHAT_ID,
+    token:   TG_TOKEN,
+    text,
+  };
+  console.log("[QuantScan] sendTelegram → POST", MAKE_WEBHOOK, payload);
   try {
-    await fetch(TG_API, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ chat_id: TG_CHAT_ID, text, parse_mode: "HTML" }),
-    });
-  } catch { /* silent */ }
-}
-
-async function triggerMake(payload) {
-  try {
-    await fetch(MAKE_WEBHOOK, {
+    const res  = await fetch(MAKE_WEBHOOK, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify(payload),
     });
-  } catch { /* silent */ }
+    const body = await res.text();
+    console.log("[QuantScan] sendTelegram ← status:", res.status, "body:", body);
+  } catch (err) {
+    console.error("[QuantScan] sendTelegram ERROR:", err);
+  }
+}
+
+async function triggerMake(payload) {
+  console.log("[QuantScan] triggerMake → POST", MAKE_WEBHOOK, payload);
+  try {
+    const res  = await fetch(MAKE_WEBHOOK, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(payload),
+    });
+    const body = await res.text();
+    console.log("[QuantScan] triggerMake ← status:", res.status, "body:", body);
+  } catch (err) {
+    console.error("[QuantScan] triggerMake ERROR:", err);
+  }
 }
 
 function exportConfig() {
@@ -1858,13 +1886,20 @@ function ScannerScreen({ macro, onSelectStock }) {
     setScanning(false);
     saveScanCache({ results: batch.sort((a, b) => b.score - a.score), goldenAlerts: golden, lastScan: ts });
 
-    if (golden.length) {
-      const msg = `🌟 <b>QuantScan — Oportunidades de Alta Convicción</b>\n\n${
-        golden.map((g) => `• <b>${g.ticker}</b> (${g.sector}) Score: ${g.score.toFixed(0)} — ${g.signal}`).join("\n")
-      }\n\n🕐 ${new Date().toLocaleString("es-ES")}`;
-      sendTelegram(msg);
-      triggerMake({ event: "weekly_scan", golden, timestamp: new Date().toISOString() });
-    }
+    // Notificación siempre, con o sin golden alerts
+    const top5 = [...batch].sort((a, b) => b.score - a.score).slice(0, 5);
+    const scanMsg = [
+      `📊 <b>QuantScan — Scan Semanal Completado</b>`,
+      `📅 ${new Date().toLocaleString("es-ES")}`,
+      `🔢 ${batch.length} acciones analizadas`,
+      golden.length
+        ? `\n🌟 <b>Alta convicción (score ≥ 72):</b>\n` +
+          golden.map((g) => `  • ${g.ticker} (${g.sector}) — ${g.score.toFixed(0)} · ${g.signal}`).join("\n")
+        : `\n⚠️ Sin oportunidades de alta convicción esta semana`,
+      `\n📈 <b>Top 5:</b>\n` +
+        top5.map((r) => `  • ${r.ticker} — ${r.score.toFixed(0)} · ${r.signal}`).join("\n"),
+    ].join("\n");
+    sendTelegram(scanMsg);
   }
 
   const sectorRep = useMemo(() => {

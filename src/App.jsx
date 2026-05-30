@@ -1789,14 +1789,30 @@ CONCLUSIÓN: ${bullish
 /* ═══════════════════════════════════════════════════════════════════════════
    SCANNER SCREEN — scan semanal sector-representativo · banner dorado
 ═══════════════════════════════════════════════════════════════════════════ */
+const SCAN_CACHE_KEY = "qs_last_scan";
+
+function loadScanCache() {
+  try {
+    const raw = localStorage.getItem(SCAN_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+function saveScanCache(payload) {
+  try { localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify(payload)); } catch {}
+}
+
 function ScannerScreen({ macro, onSelectStock }) {
-  const [results,  setResults]  = useState([]);
-  const [scanning, setScanning] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const cached = useMemo(() => loadScanCache(), []);
+
+  const [results,      setResults]      = useState(cached?.results      ?? []);
+  const [scanning,     setScanning]     = useState(false);
+  const [progress,     setProgress]     = useState(0);
   const [sectorFilter, setSectorFilter] = useState("ALL");
-  const [sortKey,  setSortKey]  = useState("score");
-  const [lastScan, setLastScan] = useState(null);
-  const [goldenAlerts, setGoldenAlerts] = useState([]);
+  const [sortKey,      setSortKey]      = useState("score");
+  const [lastScan,     setLastScan]     = useState(cached?.lastScan     ?? null);
+  const [goldenAlerts, setGoldenAlerts] = useState(cached?.goldenAlerts ?? []);
 
   const sectors = useMemo(() => {
     const s = new Set(SAMPLE_STOCKS.map((s) => s.sector));
@@ -1836,9 +1852,11 @@ function ScannerScreen({ macro, onSelectStock }) {
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
 
+    const ts = new Date().toISOString();
     setGoldenAlerts(golden);
-    setLastScan(new Date().toISOString());
+    setLastScan(ts);
     setScanning(false);
+    saveScanCache({ results: batch.sort((a, b) => b.score - a.score), goldenAlerts: golden, lastScan: ts });
 
     if (golden.length) {
       const msg = `🌟 <b>QuantScan — Oportunidades de Alta Convicción</b>\n\n${

@@ -544,8 +544,10 @@ async function fetchMacroContext() {
   const cpi     = results.cpi?.current   || rnd(295, 320);
   const unrate  = results.unrate?.current ?? rnd(3.5, 4.5);
 
-  const netLiquidity = fedBs - rnd(3.2e12, 3.8e12);
-  const liqChange    = ((netLiquidity - fedBs * 0.98) / (fedBs * 0.98)) * 100;
+  const netLiquidity = fedBs;
+  const liqChange    = fedPrev && fedPrev !== fedBs
+    ? ((fedBs - fedPrev) / fedPrev) * 100
+    : 0;
 
   return {
     fedBs, fedPrev, t10y2y, dff, m2, cpi, unrate,
@@ -2260,10 +2262,9 @@ function MacroScreen({ macro, onRefresh }) {
               color: T.amber, marginBottom: 4 }}>
               {fmtK(macro.fedBs)}
             </div>
-            <DataRow label="Liquidez Neta" value={fmtK(macro.netLiquidity)} />
-            <DataRow label="Variación" value={fmtPct(macro.liqChange)}
+            <DataRow label="Obs. anterior (FRED)" value={fmtK(macro.fedPrev)} color={T.text2} />
+            <DataRow label="Variación vs obs. anterior" value={fmtPct(macro.liqChange)}
               color={macro.liqChange > 0 ? T.green : T.red} />
-            <DataRow label="Período anterior" value={fmtK(macro.fedPrev)} color={T.text2} />
             <div style={{
               marginTop: T.sp3, padding: T.sp2,
               background: macro.liqChange > 0 ? T.greenDim : T.redDim,

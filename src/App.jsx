@@ -536,16 +536,16 @@ async function fetchMacroContext() {
     })
   );
 
-  const fedBs   = results.fed?.current   || rnd(7.0e12, 8.5e12);
-  const fedPrev = results.fed?.previous  || fedBs * 0.998;
+  const fedBs   = (results.fed?.current  > 0) ? results.fed.current  : rnd(7.0e12, 8.5e12);
+  const fedPrev = (results.fed?.previous > 0) ? results.fed.previous : fedBs * 0.998;
   const t10y2y  = results.t10y2y?.current ?? rnd(-0.5, 1.5);
   const dff     = results.dff?.current   ?? rnd(4.25, 5.5);
   const m2      = results.m2?.current    || rnd(20e12, 22e12);
   const cpi     = results.cpi?.current   || rnd(295, 320);
   const unrate  = results.unrate?.current ?? rnd(3.5, 4.5);
 
-  const netLiquidity = fedBs;
-  const liqChange    = fedPrev && fedPrev !== fedBs
+  // Variación: periodo actual vs periodo anterior inmediato de FRED
+  const liqChange = (fedPrev > 0)
     ? ((fedBs - fedPrev) / fedPrev) * 100
     : 0;
 
